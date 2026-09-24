@@ -42,6 +42,11 @@ cd plugins/opencode-meta && bun test
 cd plugins/opencode-recall-lite && bun test
 ```
 
+## Acknowledgements
+
+- `opencode-recall-lite` builds on [opencode-session-recall](https://github.com/rmk40/opencode-session-recall) by maelos (MIT), which we used with OpenCode v1. It takes that plugin's idea, its `recall` / `recall_get` tool names and its `[recall-nudge]` system reminder, and reimplements a much smaller version on the v2 plugin API. It shares no code with it. For OpenCode v1, use the original: it is far more capable.
+- `send_message` follows the design of [Claude Code's cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging). See also [opencode-agent-messaging](https://github.com/TheArctesian/opencode-agent-messaging), an implementation for OpenCode v1.
+
 ## Licence
 
 MIT

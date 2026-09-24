@@ -1,6 +1,6 @@
 # opencode-recall-lite (OpenCode v2 plugin)
 
-A small replacement for the third-party `opencode-session-recall` plugin, which has no OpenCode v2 release. It keeps the two behaviours the workflow relies on: a `recall` tool that searches previously seen sessions across projects, and a `[recall-nudge]` system-prompt reminder to search history before answering questions about it.
+A small replacement for [opencode-session-recall](https://github.com/rmk40/opencode-session-recall) by maelos (MIT), which has no OpenCode v2 release. The idea, the `recall` / `recall_get` tool names and the `[recall-nudge]` reminder come from that plugin; this is an independent, much smaller reimplementation on the v2 plugin API and shares no code with it. It keeps the two behaviours the workflow relies on: a `recall` tool that searches previously seen sessions across projects, and a `[recall-nudge]` system-prompt reminder to search history before answering questions about it.
 
 ## Tools
 
