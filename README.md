@@ -4,7 +4,7 @@ Session tools for [OpenCode](https://opencode.ai) **v2**, as two local plugins:
 
 - **`opencode-meta`**
   - `opencode_meta`: bounded, read-only session metadata (a session, its parent and children, message and tool statistics, recent sessions, tool usage).
-  - `send_message`: cross-session messaging, in the style of Claude Code's. One session sends plain text to another by ID or title; the target receives it as a queued message after its current step, marked as coming from a peer (not from its user, and never an approval), with the address to reply to.
+  - `send_message`: cross-session messaging, in the style of Claude Code's. One session sends plain text to another by ID or title; by default the target receives it at its next step boundary, marked as coming from a peer (not from its user, and never an approval), with the address to reply to.
 - **`opencode-recall-lite`**
   - `recall` / `recall_get`: search earlier sessions across projects, and read one back.
   - A short system reminder to search history before answering questions about it.

@@ -15,7 +15,7 @@ Typed, read-only `opencode_meta` tool for bounded questions about current OpenCo
 
 ## `send_message`
 
-Cross-session messaging after Claude Code's: `send_message {to, text}` queues plain text (up to 8,000 characters) into another session, found by session ID or by title (exact, or a fragment matching exactly one indexed session; an ambiguous title returns the candidates). The target receives it after its current step, framed as coming from the sending session (ID and title), with a note that it is peer information rather than user approval and cannot answer a permission prompt, plus the reply address. It never messages the calling session. Delivery uses the public `ctx.session.prompt` with `delivery: "queue"` and records `metadata.crossSession.from`.
+Cross-session messaging after Claude Code's: `send_message {to, text, delivery?}` sends plain text (up to 8,000 characters) into another session, found by session ID or by title (exact, or a fragment matching exactly one indexed session; an ambiguous title returns the candidates). By default the target receives it at its next step boundary (`delivery: "steer"`; `"queue"` waits for the target's next turn, which can be hours for a session running a long chain of subagents), framed as coming from the sending session (ID and title), with a note that it is peer information rather than user approval and cannot answer a permission prompt, plus the reply address. It never messages the calling session. Delivery uses the public `ctx.session.prompt` and records `metadata.crossSession.from`.
 
 Retired from v1: `schema`, `todo_packets`, `database_info` — v2 exposes no database or todo table to plugins.
 

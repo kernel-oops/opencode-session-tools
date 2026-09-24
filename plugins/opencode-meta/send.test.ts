@@ -40,12 +40,18 @@ describe("send_message", () => {
     const { storage, sessions, prompts, known } = fixture()
     await index(storage, known)
     const result = await sendMessage(storage, sessions, { to: "KAN 129", text: "Tell me when it is merged." }, { sessionID: "ses_sender" })
-    expect(result).toEqual({ delivered: true, to: "ses_target", title: known.ses_target.title })
+    expect(result).toEqual({ delivered: true, to: "ses_target", title: known.ses_target.title, delivery: "steer" })
     expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toMatchObject({ sessionID: "ses_target", delivery: "queue", metadata: { crossSession: { from: "ses_sender" } } })
+    expect(prompts[0]).toMatchObject({ sessionID: "ses_target", delivery: "steer", metadata: { crossSession: { from: "ses_sender" } } })
     expect(prompts[0].text).toContain('[cross-session message from ses_sender "Implement and merge KAN-132"]')
     expect(prompts[0].text).toContain("Tell me when it is merged.")
     expect(prompts[0].text).toContain('reply with send_message to "ses_sender"')
+  })
+
+  test("queue delivery is available for messages that can wait for the next turn", async () => {
+    const { storage, sessions, prompts } = fixture()
+    await sendMessage(storage, sessions, { to: "ses_target", text: "no rush", delivery: "queue" }, { sessionID: "ses_sender" })
+    expect(prompts[0].delivery).toBe("queue")
   })
 
   test("accepts a session ID directly and refuses unknown IDs", async () => {

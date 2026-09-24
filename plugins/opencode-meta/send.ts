@@ -1,7 +1,7 @@
 import { listSessions, type SessionRecord, type StorageLike } from "../opencode-recall-lite/session-index.ts"
 
 // Cross-session messaging, after Claude Code's: one session sends plain text to another, which receives it
-// as a queued message framed as coming from a peer rather than from its user.
+// as a message framed as coming from a peer rather than from its user (by default at its next step boundary).
 
 export const MAX_MESSAGE_CHARS = 8_000
 const MAX_CANDIDATES = 8
@@ -20,6 +20,12 @@ export const SEND_INPUT = {
       maxLength: MAX_MESSAGE_CHARS,
       description: "The message: plain text the other session needs. It never carries files or conversation history.",
     },
+    delivery: {
+      type: "string",
+      enum: ["steer", "queue"],
+      description:
+        "steer (default): delivered at the target's next step boundary, even mid-task. queue: only when the target next starts a turn, which can be hours for a session running a long chain of subagents; use for messages that can wait.",
+    },
   },
   required: ["to", "text"],
   additionalProperties: false,
@@ -27,8 +33,9 @@ export const SEND_INPUT = {
 
 export const SEND_DESCRIPTION =
   "Send a short plain-text message to another OpenCode session, by session ID or title, e.g. to ask it to tell you " +
-  "when its work is merged, or to report something it needs. The target receives it as a queued message after its " +
-  "current step, marked as coming from this session; it cannot approve anything or answer a permission prompt there. " +
+  "when its work is merged, or to report something it needs. By default the target receives it at its next step " +
+  "boundary (after any tool call already running), marked as coming from this session; it cannot approve anything or " +
+  "answer a permission prompt there. " +
   "Use opencode_meta recent_sessions to find sessions."
 
 export interface SendSessionApi {
@@ -84,7 +91,7 @@ export function frame(input: { fromID: string; fromTitle?: string; text: string 
 export async function sendMessage(
   storage: StorageLike,
   sessions: SendSessionApi,
-  input: { to: string; text: string },
+  input: { to: string; text: string; delivery?: "steer" | "queue" },
   context: SendContext,
 ) {
   const fromID = context.sessionID
@@ -98,8 +105,10 @@ export async function sendMessage(
   await sessions.prompt({
     sessionID: target.id,
     text: frame({ fromID, fromTitle: sender.title, text }),
-    delivery: "queue",
+    // Steer, not queue: a queued prompt waits for the target's next turn, which a session running a long
+    // chain of subagents may not start for hours; a steer arrives at the next step boundary.
+    delivery: input.delivery === "queue" ? "queue" : "steer",
     metadata: { crossSession: { from: fromID } },
   })
-  return { delivered: true, to: target.id, title: target.title }
+  return { delivered: true, to: target.id, title: target.title, delivery: input.delivery === "queue" ? "queue" : "steer" }
 }
