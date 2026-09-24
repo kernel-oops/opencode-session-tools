@@ -1,0 +1,39 @@
+{
+  "name": "@kerneloops/opencode-session-tools",
+  "version": "0.1.0",
+  "description": "Session tools for OpenCode v2: session metadata, history recall and Claude Code-style cross-session messaging",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "plugins/opencode-meta/*.ts",
+    "plugins/opencode-meta/README.md",
+    "plugins/opencode-recall-lite/*.ts",
+    "plugins/opencode-recall-lite/README.md",
+    "!**/*.test.ts",
+    "!plugins/opencode-recall-lite/mock-ctx.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-v2",
+    "sessions",
+    "recall",
+    "messaging"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kernel-oops/opencode-session-tools.git"
+  },
+  "homepage": "https://github.com/kernel-oops/opencode-session-tools#readme",
+  "bugs": "https://github.com/kernel-oops/opencode-session-tools/issues",
+  "license": "MIT",
+  "scripts": {
+    "test": "bun test"
+  }
+}

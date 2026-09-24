@@ -13,7 +13,13 @@ Both plugins use only OpenCode v2's public plugin API. They share a small sessio
 
 ## Install
 
-Copy both directories into your OpenCode v2 config directory's `plugins/`, for example `~/.config/opencode/plugins/`:
+From npm, as one plugin: add it to the `plugins` list in your OpenCode v2 `opencode.json`, and OpenCode installs it:
+
+```json
+{ "plugins": [{ "package": "@kerneloops/opencode-session-tools" }] }
+```
+
+Or, as two local plugins, copy both directories into your OpenCode v2 config directory's `plugins/`, for example `~/.config/opencode/plugins/`:
 
 ```sh
 cp -r plugins/opencode-meta plugins/opencode-recall-lite ~/.config/opencode/plugins/

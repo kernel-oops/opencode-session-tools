@@ -291,15 +291,22 @@ export interface MetaPluginOptions {
   debug?: boolean
 }
 
-export async function setupMeta(ctx: any): Promise<() => void> {
+/**
+ * `indexing: false` when another plugin instance sharing this storage already maintains the session index
+ * (the combined npm entry runs recall-lite's indexer and this one's tools over one index).
+ */
+export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): Promise<() => void> {
   const options = (ctx.options ?? {}) as MetaPluginOptions
   const storage = ctx.storage as StorageLike
   const sessions = ctx.session as SessionApiLike
   const log = (message: string, extra?: unknown) => {
     if (options.debug) console.error(`[opencode-meta] ${message}`, extra ?? "")
   }
-  await markStarted(storage)
-  const stop = startIndexing(ctx.event, storage, { onError: (error) => log("index error", error) })
+  let stop = () => {}
+  if (setup.indexing !== false) {
+    await markStarted(storage)
+    stop = startIndexing(ctx.event, storage, { onError: (error) => log("index error", error) })
+  }
   await ctx.tool.transform((editor: any) => {
     editor.add({
       name: "opencode_meta",
