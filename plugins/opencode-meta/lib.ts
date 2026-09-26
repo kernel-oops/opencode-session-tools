@@ -11,6 +11,7 @@ import {
   type StorageLike,
 } from "../opencode-recall-lite/session-index.ts"
 import { SEND_DESCRIPTION, SEND_INPUT, sendMessage, type SendSessionApi } from "./send.ts"
+import { isTurnEnd, ParentRelay } from "./relay.ts"
 
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 100
@@ -295,7 +296,7 @@ export interface MetaPluginOptions {
  * `indexing: false` when another plugin instance sharing this storage already maintains the session index
  * (the combined npm entry runs recall-lite's indexer and this one's tools over one index).
  */
-export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): Promise<() => void> {
+export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): Promise<() => Promise<void>> {
   const options = (ctx.options ?? {}) as MetaPluginOptions
   const storage = ctx.storage as StorageLike
   const sessions = ctx.session as SessionApiLike
@@ -307,6 +308,12 @@ export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): P
     await markStarted(storage)
     stop = startIndexing(ctx.event, storage, { onError: (error) => log("index error", error) })
   }
+  const relay = new ParentRelay(ctx.session as SendSessionApi, { onError: (error) => log("relay error", error) })
+  const stopRelay = watchTurnEnds(ctx.event, relay, (error) => log("relay event error", error))
+  const hooks = typeof ctx.tool?.hook !== "function" ? [] : [
+    await ctx.tool.hook("execute.before", (event: any) => relay.toolStarted(event.sessionID, event.tool)),
+    await ctx.tool.hook("execute.after", (event: any) => relay.subagentFinished(event)),
+  ]
   await ctx.tool.transform((editor: any) => {
     editor.add({
       name: "opencode_meta",
@@ -331,11 +338,33 @@ export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): P
       input: SEND_INPUT,
       options: { codemode: false },
       execute: async (input: unknown, context: ToolContextLike) => {
-        const result = await sendMessage(storage, ctx.session as SendSessionApi, input as { to: string; text: string }, context)
+        const result = await sendMessage(storage, ctx.session as SendSessionApi, input as { to: string; text: string }, context, relay)
         return { content: boundedJson(result, MAX_OUTPUT_BYTES) }
       },
     })
     log("tool registered", editor.list?.().map((tool: any) => tool.id))
   })
-  return () => stop()
+  return async () => {
+    stop()
+    stopRelay()
+    for (const registration of hooks) await registration?.dispose?.()
+    await relay.dispose()
+  }
+}
+
+function watchTurnEnds(events: any, relay: ParentRelay, onError: (error: unknown) => void): () => void {
+  if (typeof events?.subscribe !== "function") return () => {}
+  const controller = new AbortController()
+  void (async () => {
+    try {
+      for await (const event of events.subscribe({ signal: controller.signal })) {
+        if (controller.signal.aborted) break
+        const sessionID = isTurnEnd(event)
+        if (sessionID) await relay.turnEnded(sessionID).catch(onError)
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) onError(error)
+    }
+  })()
+  return () => controller.abort()
 }

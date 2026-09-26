@@ -10,8 +10,8 @@ export default {
   async setup(ctx: any) {
     const stopRecall = await setupRecall(ctx)
     const stopMeta = await setupMeta(ctx, { indexing: false })
-    return () => {
-      stopMeta()
+    return async () => {
+      await stopMeta()
       stopRecall()
     }
   },

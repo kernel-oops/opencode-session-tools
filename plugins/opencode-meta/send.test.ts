@@ -18,7 +18,7 @@ function memoryStorage() {
 
 function fixture() {
   const storage = memoryStorage()
-  const known: Record<string, { id: string; title: string }> = {
+  const known: Record<string, { id: string; title: string; parentID?: string }> = {
     ses_sender: { id: "ses_sender", title: "Implement and merge KAN-132" },
     ses_target: { id: "ses_target", title: "Complete KAN 129 implementation and arrange review" },
     ses_other: { id: "ses_other", title: "Complete KAN 130 batches" },
@@ -68,6 +68,23 @@ describe("send_message", () => {
     await expect(sendMessage(storage, sessions, { to: "ses_sender", text: "hi" }, { sessionID: "ses_sender" })).rejects.toThrow(
       "That is this session",
     )
+  })
+
+  test("holds a message to the sender's own parent for the relay, but sends to other ancestors and peers", async () => {
+    const { storage, sessions, prompts, known } = fixture()
+    Object.assign(known, {
+      ses_root: { id: "ses_root", title: "Root" },
+      ses_mid: { id: "ses_mid", title: "Controller", parentID: "ses_root" },
+      ses_leaf: { id: "ses_leaf", title: "Worker", parentID: "ses_mid" },
+    })
+    const held: any[] = []
+    const relay = { hold: (childID: string, message: any) => void held.push({ childID, ...message }) }
+    const result = await sendMessage(storage, sessions, { to: "ses_mid", text: "A done" }, { sessionID: "ses_leaf" }, relay)
+    expect(result).toMatchObject({ delivered: false, held: true, to: "ses_mid" })
+    expect(held).toMatchObject([{ childID: "ses_leaf", parentID: "ses_mid", text: "A done", delivery: "steer" }])
+    await sendMessage(storage, sessions, { to: "ses_root", text: "fyi" }, { sessionID: "ses_leaf" }, relay)
+    await sendMessage(storage, sessions, { to: "ses_leaf", text: "also check X" }, { sessionID: "ses_mid" }, relay)
+    expect(prompts.map((prompt) => prompt.sessionID)).toEqual(["ses_root", "ses_leaf"])
   })
 
   test("the frame marks the text as peer information, not user approval", () => {

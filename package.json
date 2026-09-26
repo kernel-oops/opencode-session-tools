@@ -1,6 +1,6 @@
 {
   "name": "@kerneloops/opencode-session-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Session tools for OpenCode v2: session metadata, history recall and Claude Code-style cross-session messaging",
   "type": "module",
   "main": "index.ts",

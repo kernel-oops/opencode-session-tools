@@ -1,3 +1,4 @@
+import type { ParentRelay } from "./relay.ts"
 import { listSessions, type SessionRecord, type StorageLike } from "../opencode-recall-lite/session-index.ts"
 
 // Cross-session messaging, after Claude Code's: one session sends plain text to another, which receives it
@@ -35,7 +36,7 @@ export const SEND_DESCRIPTION =
   "Send a short plain-text message to another OpenCode session, by session ID or title, e.g. to ask it to tell you " +
   "when its work is merged, or to report something it needs. By default the target receives it at its next step " +
   "boundary (after any tool call already running), marked as coming from this session; it cannot approve anything or " +
-  "answer a permission prompt there. " +
+  "answer a permission prompt there. A message to the session that launched you is held until you next call a tool, or merged with your final reply if you finish first, so never repeat it there. " +
   "Use opencode_meta recent_sessions to find sessions."
 
 export interface SendSessionApi {
@@ -47,9 +48,11 @@ export interface SendContext {
   sessionID?: string
 }
 
-function info(value: unknown): { id?: string; title?: string; location?: { directory?: string } } {
+type SessionInfo = { id?: string; title?: string; parentID?: string; location?: { directory?: string } }
+
+function info(value: unknown): SessionInfo {
   const data = (value as { data?: unknown } | undefined)?.data ?? value
-  return (data ?? {}) as { id?: string; title?: string; location?: { directory?: string } }
+  return (data ?? {}) as SessionInfo
 }
 
 function describe(record: SessionRecord) {
@@ -93,6 +96,7 @@ export async function sendMessage(
   sessions: SendSessionApi,
   input: { to: string; text: string; delivery?: "steer" | "queue" },
   context: SendContext,
+  relay?: Pick<ParentRelay, "hold">,
 ) {
   const fromID = context.sessionID
   if (!fromID) throw new Error("send_message needs the calling session.")
@@ -102,13 +106,27 @@ export async function sendMessage(
   const target = await resolveTarget(storage, sessions, input.to)
   if (target.id === fromID) throw new Error("That is this session; send_message is for other sessions.")
   const sender = info(await sessions.get({ sessionID: fromID }).catch(() => undefined))
+  const framed = frame({ fromID, fromTitle: sender.title, text })
+  const metadata = { crossSession: { from: fromID } }
+  // A message to this subagent's own parent may be its final report; the relay decides once the subagent either
+  // carries on working (deliver now) or finishes (merge into its result).
+  if (relay && sender.parentID === target.id) {
+    relay.hold(fromID, { parentID: target.id, text, framed, metadata, delivery: input.delivery === "queue" ? "queue" : "steer" })
+    return {
+      delivered: false,
+      held: true,
+      to: target.id,
+      title: target.title,
+      note: "This is the session that launched you. It gets this message when you next call a tool, or together with your final reply if you finish first. Do not repeat it in your final reply.",
+    }
+  }
   await sessions.prompt({
     sessionID: target.id,
-    text: frame({ fromID, fromTitle: sender.title, text }),
+    text: framed,
     // Steer, not queue: a queued prompt waits for the target's next turn, which a session running a long
     // chain of subagents may not start for hours; a steer arrives at the next step boundary.
     delivery: input.delivery === "queue" ? "queue" : "steer",
-    metadata: { crossSession: { from: fromID } },
+    metadata,
   })
   return { delivered: true, to: target.id, title: target.title, delivery: input.delivery === "queue" ? "queue" : "steer" }
 }
