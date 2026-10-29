@@ -15,8 +15,11 @@ export const MAX_EVENT_BYTES = 40 * 1024
 export const MAX_BATCH_BYTES = 48 * 1024
 export const MAX_BATCH_EVENTS = 20
 export const MAX_PAGE = 20
-// Session titles have no length limit; headers repeat them per row, so list and ack results show only this much.
-export const MAX_HEADER_TITLE = 200
+// List and ack return up to 20 headers; descriptive fields (a title has no length limit, receipt fields allow 512
+// characters, and escaping can make each character 6 bytes) are clipped there so a page stays under MAX_BATCH_BYTES.
+// read still returns the full original.
+export const MAX_HEADER_FIELD = 48
+const clip = (value?: string) => value?.slice(0, MAX_HEADER_FIELD)
 
 export const RECEIPT_KINDS = ["fyi", "actionable"] as const
 /** Receipt states an FYI may carry and stay passive. */
@@ -751,12 +754,12 @@ export class PeerInbox {
     return {
       id: entry.event.ref,
       from: entry.event.from,
-      ...(entry.event.fromTitle ? { from_title: entry.event.fromTitle.slice(0, MAX_HEADER_TITLE) } : {}),
+      ...(entry.event.fromTitle ? { from_title: clip(entry.event.fromTitle) } : {}),
       at: new Date(entry.event.at).toISOString(),
       status,
       version: this.version(entry),
       passive: entry.event.passive,
-      ...(receipt ? { kind: receipt.kind, state: receipt.state, work_item: receipt.work_item, revision: receipt.revision, job_id: receipt.job_id } : { kind: "untyped" }),
+      ...(receipt ? { kind: receipt.kind, state: receipt.state, work_item: clip(receipt.work_item), revision: clip(receipt.revision), job_id: clip(receipt.job_id) } : { kind: "untyped" }),
       ...(receipt?.restrictions?.length ? { restrictions: receipt.restrictions.length } : {}),
       ...(receipt?.unresolved?.length ? { unresolved: receipt.unresolved.length } : {}),
       ...(delivery ? { delivery, batch: batch!.id } : {}),

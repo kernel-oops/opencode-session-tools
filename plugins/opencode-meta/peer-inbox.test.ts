@@ -308,13 +308,17 @@ describe("peer_inbox: self-bound status, list, read, ack", () => {
     expect(w.calls).toEqual([])
   })
 
-  test("list and conflicting ack stay small when a sender's title is huge", async () => {
+  test("list and conflicting ack stay within 48 KiB with huge titles and escaped or multibyte receipt fields", async () => {
     const w = world()
-    w.known.ses_w1.title = "€".repeat(12_000) // 36 KB, within the 40 KiB original cap
-    for (let i = 0; i < 20; i++) await w.send("ses_w1", "Routine", { receipt: fyi({ id: `t${i}` }) })
+    w.known.ses_w1.title = "€".repeat(10_000) // 30 KB, within the 40 KiB original cap
+    const field = (c: string) => c.repeat(512) // 512 characters: the receipt maximum
+    for (let i = 0; i < 20; i++)
+      await w.send("ses_w1", "Routine", { receipt: fyi({ id: `t${String(i).padStart(128, "x")}`.slice(-128), work_item: field("\u0001"), revision: field("€"), job_id: field('"') }) })
     const list = await w.op({ operation: "list" })
     expect(list.items).toHaveLength(20)
-    expect(list.items[0].from_title).toBe("€".repeat(200))
+    expect(list.items[0]).toMatchObject({ from_title: "€".repeat(48), work_item: "\u0001".repeat(48), revision: "€".repeat(48), job_id: '"'.repeat(48) })
+    const read = await w.op({ operation: "read", ids: [list.items[0].id] })
+    expect(read.items[0].receipt.work_item).toBe(field("\u0001"))
     expect(Buffer.byteLength(JSON.stringify(list))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
     const ack = await w.op({ operation: "ack", disposition: "processed", items: list.items.map((item: any) => ({ id: item.id, expected_version: 9 })) })
     expect(ack.results.every((r: any) => r.conflict)).toBe(true)
