@@ -41,6 +41,7 @@ Optionally, allow the tools without a permission prompt in `opencode.json`:
 - `recall` ranks by term matches in titles and transcripts; it is not semantic search.
 - `send_message` finds a session by title only among indexed sessions. An ambiguous title returns the candidates, so pass the ID.
 - Plugin storage holds the index (session titles, directories and recent transcript text from every project on the server) and every peer message and receipt. It is never expired or garbage-collected, so it grows with use; treat it as sensitive. Directory filters in `recall` are a convenience, not access control.
+- The peer inbox has no total size limit. Each message is capped at 40 KiB, but every distinct message stays on disk and in the server's memory, even after it is acknowledged or archived, and all of them are loaded at startup. A sender stuck in a loop of passive reports can use up disk or memory. Acknowledge or archive entries to keep the inbox views short; this does not free space. Watch `stored_bytes` in `peer_inbox status`.
 - Digest and peer-inbox state assume one OpenCode server owns the plugin storage. Two servers sharing the same storage are not supported.
 - If the recipient session runs on a provider with the ID `claude-code` (a Claude Code CLI bridge), the reply hint names `mcp__opencode__send_message` instead of `send_message`. Nothing else depends on it.
 

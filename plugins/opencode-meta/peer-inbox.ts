@@ -15,6 +15,8 @@ export const MAX_EVENT_BYTES = 40 * 1024
 export const MAX_BATCH_BYTES = 48 * 1024
 export const MAX_BATCH_EVENTS = 20
 export const MAX_PAGE = 20
+// Session titles have no length limit; headers repeat them per row, so list and ack results show only this much.
+export const MAX_HEADER_TITLE = 200
 
 export const RECEIPT_KINDS = ["fyi", "actionable"] as const
 /** Receipt states an FYI may carry and stay passive. */
@@ -749,7 +751,7 @@ export class PeerInbox {
     return {
       id: entry.event.ref,
       from: entry.event.from,
-      ...(entry.event.fromTitle ? { from_title: entry.event.fromTitle } : {}),
+      ...(entry.event.fromTitle ? { from_title: entry.event.fromTitle.slice(0, MAX_HEADER_TITLE) } : {}),
       at: new Date(entry.event.at).toISOString(),
       status,
       version: this.version(entry),

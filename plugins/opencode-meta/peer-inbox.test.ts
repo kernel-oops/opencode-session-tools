@@ -308,6 +308,19 @@ describe("peer_inbox: self-bound status, list, read, ack", () => {
     expect(w.calls).toEqual([])
   })
 
+  test("list and conflicting ack stay small when a sender's title is huge", async () => {
+    const w = world()
+    w.known.ses_w1.title = "€".repeat(12_000) // 36 KB, within the 40 KiB original cap
+    for (let i = 0; i < 20; i++) await w.send("ses_w1", "Routine", { receipt: fyi({ id: `t${i}` }) })
+    const list = await w.op({ operation: "list" })
+    expect(list.items).toHaveLength(20)
+    expect(list.items[0].from_title).toBe("€".repeat(200))
+    expect(Buffer.byteLength(JSON.stringify(list))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
+    const ack = await w.op({ operation: "ack", disposition: "processed", items: list.items.map((item: any) => ({ id: item.id, expected_version: 9 })) })
+    expect(ack.results.every((r: any) => r.conflict)).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(ack))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
+  })
+
   test("read returns whole originals up to 48 KiB and names the rest; read is not processed", async () => {
     const w = world()
     const ids: string[] = []
