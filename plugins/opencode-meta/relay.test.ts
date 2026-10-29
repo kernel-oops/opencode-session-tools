@@ -64,6 +64,17 @@ describe("ParentRelay", () => {
     expect(prompts).toHaveLength(2)
   })
 
+  test("unloading hands held messages over without waiting for their delivery", async () => {
+    // During a plugin reload OpenCode answers a prompt only once the reload has finished.
+    const prompts: any[] = []
+    const relay = new ParentRelay({ prompt: (input) => (prompts.push(input), new Promise(() => {})) }, { graceMs: 5 })
+    relay.hold("ses_child", { parentID: "ses_parent", text: "a", framed: "[framed] a", metadata: {}, delivery: "steer" })
+    relay.hold("ses_other", { parentID: "ses_parent", text: "b", framed: "[framed] b", metadata: {}, delivery: "queue" })
+    await relay.dispose()
+    expect(prompts.map((prompt) => prompt.text)).toEqual(["[framed] a", "[framed] b"])
+    expect(relay.pending("ses_child") + relay.pending("ses_other")).toBe(0)
+  })
+
   test("recognises turn-end events", () => {
     expect(isTurnEnd({ type: "session.execution.succeeded", data: { sessionID: "ses_a" } })).toBe("ses_a")
     expect(isTurnEnd({ type: "session.execution.interrupted", data: { sessionID: "ses_a" } })).toBe("ses_a")

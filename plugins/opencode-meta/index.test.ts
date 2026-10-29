@@ -39,10 +39,10 @@ describe("opencode-meta v2", () => {
       messages: { ses_p: messages, ses_c: [] },
     })
     const cleanup = await plugin.setup(ctx)
-    expect(ctx._tools.map((tool: any) => tool.name)).toEqual(["opencode_meta", "send_message"])
+    expect(ctx._tools.map((tool: any) => tool.name)).toEqual(["opencode_meta", "send_message", "peer_inbox"])
     ctx.emit({ type: "session.created", created: 10, data: { sessionID: "ses_c", parentID: "ses_p", projectID: "proj_a", location: { directory: "/tmp/project-a" }, title: "Child" } })
     await ctx.settle()
-    const run = async (input: unknown) => JSON.parse((await ctx._tools[0].execute(input, { sessionID: "ses_p" })).content)
+    const run = async (input: unknown) => JSON.parse((await ctx._tools.find((tool: any) => tool.name === "opencode_meta").execute(input, { sessionID: "ses_p" })).content)
 
     const session = await run({ operation: "session" })
     expect(session.session).toMatchObject({ id: "ses_p", title: "Parent", directory: "/tmp/project-a", agent: "build", cost_usd: 0.01 })

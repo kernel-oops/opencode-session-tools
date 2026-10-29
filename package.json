@@ -1,7 +1,8 @@
 {
   "name": "@kerneloops/opencode-session-tools",
-  "version": "0.1.1",
-  "description": "Session tools for OpenCode v2: session metadata, history recall and Claude Code-style cross-session messaging",
+  "version": "0.2.0",
+  "description": "Session tools for OpenCode 2.2: session metadata, history recall, cross-session messaging, digests and a passive peer inbox",
+  "author": "Marc <marc@kernel-panic.im>",
   "type": "module",
   "main": "index.ts",
   "exports": {

@@ -38,20 +38,26 @@ function clipBytes(value: string, maxBytes: number): string {
   return `${Buffer.from(value).subarray(0, maxBytes).toString("utf8")}…`
 }
 
-/** Build the bounded text document for a session from its context messages (newest kept). */
+/**
+ * Build the bounded text document for a session from its context messages: the newest lines that fit in
+ * MAX_SESSION_TEXT_BYTES (always at least the newest one, clipped). Walks backwards from the newest message
+ * and stops once the budget is spent, so the cost is bounded by the budget, not the session's length. (It
+ * used to join every line and drop the oldest one at a time, which is quadratic: on a 4,700-message session
+ * that blocked the server's event loop for ~20 s whenever the session settled.)
+ */
 export function buildTextDoc(messages: unknown[], updated: number): TextDoc {
-  const lines: string[] = []
-  for (const message of messages) {
-    const entry = messageText(message)
+  const kept: string[] = []
+  let bytes = 0
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const entry = messageText(messages[index])
     if (!entry) continue
-    lines.push(`[${entry.role}] ${clipBytes(entry.text.replace(/\s+/g, " ").trim(), MAX_MESSAGE_TEXT_BYTES)}`)
+    const line = `[${entry.role}] ${clipBytes(entry.text.replace(/\s+/g, " ").trim(), MAX_MESSAGE_TEXT_BYTES)}`
+    const size = Buffer.byteLength(line) + (kept.length > 0 ? 1 : 0)
+    if (kept.length > 0 && bytes + size > MAX_SESSION_TEXT_BYTES) break
+    kept.push(line)
+    bytes += size
   }
-  let text = lines.join("\n")
-  while (Buffer.byteLength(text) > MAX_SESSION_TEXT_BYTES && lines.length > 1) {
-    lines.shift()
-    text = lines.join("\n")
-  }
-  return { updated, text: clipBytes(text, MAX_SESSION_TEXT_BYTES) }
+  return { updated, text: clipBytes(kept.reverse().join("\n"), MAX_SESSION_TEXT_BYTES) }
 }
 
 /** Refresh one session's record and text document from the live session API. */

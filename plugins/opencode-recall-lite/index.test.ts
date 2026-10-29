@@ -60,6 +60,33 @@ describe("recall-lite", () => {
     expect(doc.text.includes("line 0 ")).toBe(false)
   })
 
+  test("produces exactly what the old drop-the-oldest-line algorithm produced", () => {
+    const clip = (value: string, max: number) =>
+      Buffer.byteLength(value) <= max ? value : `${Buffer.from(value).subarray(0, max).toString("utf8")}…`
+    const reference = (messages: unknown[]) => {
+      const lines = messages.map((message: any) => `[user] ${clip(message.text.replace(/\s+/g, " ").trim(), 2 * 1024)}`)
+      let text = lines.join("\n")
+      while (Buffer.byteLength(text) > 32 * 1024 && lines.length > 1) {
+        lines.shift()
+        text = lines.join("\n")
+      }
+      return clip(text, 32 * 1024)
+    }
+    for (const [count, size] of [[1, 10], [3, 5_000], [15, 2_100], [16, 2_100], [40, 900], [200, 3_000], [7, 1_999]]) {
+      const messages = Array.from({ length: count }, (_, i) => userMessage(`m${i} ${"é".repeat(size)}`))
+      expect(buildTextDoc(messages, 1).text).toBe(reference(messages))
+    }
+  })
+
+  test("stays fast on a very long session (it used to be quadratic and stall the server)", () => {
+    const messages = Array.from({ length: 5_000 }, (_, i) => userMessage(`line ${i} ${"z".repeat(3_000)}`))
+    const start = performance.now()
+    const doc = buildTextDoc(messages, 1)
+    expect(performance.now() - start).toBeLessThan(200)
+    expect(doc.text.includes("line 4999 ")).toBe(true)
+    expect(Buffer.byteLength(doc.text)).toBeLessThanOrEqual(32 * 1024)
+  })
+
   test("scores titles above bodies and produces snippets", () => {
     const record = { id: "s", title: "DKIM migration", created: 0, updated: 0 }
     const doc = { updated: 0, text: "[user] please check the dkim signer later\n[assistant] done" }

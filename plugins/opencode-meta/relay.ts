@@ -7,6 +7,8 @@
 // - Its turn ends and it runs in the background: the messages are delivered now, beside its completion notice.
 // Nothing is dropped: if the merge does not happen within MERGE_GRACE_MS of the turn ending, they are delivered.
 
+import { withReceipt, type Receipt } from "./peer-inbox.ts"
+
 export const MERGE_GRACE_MS = 30_000
 const SUBAGENT_TOOL = "subagent"
 
@@ -16,7 +18,23 @@ export interface Held {
   framed: string
   metadata: Record<string, unknown>
   delivery: "steer" | "queue"
+  /** send_message's priority; with fromTitle and recipientIsClaudeCode, what a digest needs (digest.ts). */
+  priority?: "urgent" | "normal"
+  fromTitle?: string
+  recipientIsClaudeCode?: boolean
+  /** A non-passive typed receipt; passive FYIs never reach the relay. */
+  receipt?: Receipt
+  /** A typed receipt's stored original is delivered through its own durable manifest instead of a plain prompt. */
+  send?: () => Promise<unknown>
+  /** Or, for a parent in digest mode, released into its digest (durably, before the relay counts it as taken). */
+  release?: () => Promise<unknown>
 }
+
+/**
+ * Offered each message the relay is about to deliver; returns true when it has taken the message instead (a parent in
+ * digest mode). Must not wait on delivery to the parent: it runs on the unload path too.
+ */
+export type Divert = (childID: string, message: Held) => boolean | Promise<boolean>
 
 export interface RelayDelivery {
   prompt(input: { sessionID: string; text: string; delivery?: "queue" | "steer"; metadata?: Record<string, unknown> }): Promise<unknown>
@@ -29,7 +47,7 @@ export class ParentRelay {
 
   constructor(
     private sessions: RelayDelivery,
-    private options: { graceMs?: number; onError?: (error: unknown) => void } = {},
+    private options: { graceMs?: number; onError?: (error: unknown) => void; divert?: Divert } = {},
   ) {}
 
   hold(childID: string, message: Held) {
@@ -49,9 +67,24 @@ export class ParentRelay {
     if (!list?.length) return
     this.held.delete(childID)
     for (const message of list) {
+      // Normal messages honour the parent's digest first (typed ones by releasing their stored original); urgent ones are not diverted.
+      if (this.options.divert && (await this.diverted(childID, message))) continue
+      if (message.send) {
+        await message.send().catch((error) => this.options.onError?.(error))
+        continue
+      }
       await this.sessions
         .prompt({ sessionID: message.parentID, text: message.framed, delivery: message.delivery, metadata: message.metadata })
         .catch((error) => this.options.onError?.(error))
+    }
+  }
+
+  private async diverted(childID: string, message: Held): Promise<boolean> {
+    try {
+      return (await this.options.divert!(childID, message)) === true
+    } catch (error) {
+      this.options.onError?.(error)
+      return false
     }
   }
 
@@ -78,7 +111,7 @@ export class ParentRelay {
     this.clearTimer(childID)
     const block = [
       "[Sent to you with send_message during this run:]",
-      ...list.map((message) => message.text),
+      ...list.map((message) => withReceipt(message.text, message.receipt)),
       "[Final reply:]",
     ].join("\n\n")
     const output = typeof result.output?.output === "string" ? { ...result.output, output: `${block}\n\n${result.output.output}` } : result.output
@@ -101,8 +134,13 @@ export class ParentRelay {
     this.timers.set(childID, timer)
   }
 
+  /**
+   * Hands everything still held to OpenCode without waiting for delivery. The plugin is unloaded while OpenCode
+   * reloads its plugins, and a prompt waits for that reload to finish: awaiting it here would wedge the reload, and
+   * with it every session in this location.
+   */
   async dispose() {
-    for (const childID of [...this.held.keys()]) await this.flush(childID)
+    for (const childID of [...this.held.keys()]) void this.flush(childID)
   }
 
   private clearTimer(childID: string) {
