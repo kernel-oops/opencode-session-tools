@@ -316,12 +316,35 @@ describe("peer_inbox: self-bound status, list, read, ack", () => {
       await w.send("ses_w1", "Routine", { receipt: fyi({ id: `t${String(i).padStart(128, "x")}`.slice(-128), work_item: field("\u0001"), revision: field("€"), job_id: field('"') }) })
     const list = await w.op({ operation: "list" })
     expect(list.items).toHaveLength(20)
-    expect(list.items[0]).toMatchObject({ from_title: "€".repeat(48), work_item: "\u0001".repeat(48), revision: "€".repeat(48), job_id: '"'.repeat(48) })
+    expect(list.items[0]).toMatchObject({ from_title: "€".repeat(40), work_item: "\u0001".repeat(40), revision: "€".repeat(40), job_id: '"'.repeat(40) })
     const read = await w.op({ operation: "read", ids: [list.items[0].id] })
     expect(read.items[0].receipt.work_item).toBe(field("\u0001"))
     expect(Buffer.byteLength(JSON.stringify(list))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
     const ack = await w.op({ operation: "ack", disposition: "processed", items: list.items.map((item: any) => ({ id: item.id, expected_version: 9 })) })
     expect(ack.results.every((r: any) => r.conflict)).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(ack))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
+  })
+
+  test("worst-case headers: every field escaped, maximum IDs, read, archived, failed manifests, paginated", async () => {
+    const c = "\u0001"
+    const inbox = new PeerInbox(freshInbox(), { get: async () => undefined, set: async () => {} } as any, async () => {})
+    const to = "ses_recipient"
+    for (let i = 0; i < 21; i++) {
+      const { event } = await inbox.append({
+        to, from: "ses_" + "a".repeat(26), fromTitle: c.repeat(3000), text: "Routine", passive: false, direct: true,
+        receipt: readReceipt({ version: 1, kind: c.repeat(64), state: c.repeat(64), id: String(i).padStart(128, "x"), work_item: c.repeat(512), revision: c.repeat(512), job_id: c.repeat(512) }),
+      } as any)
+      await inbox.direct(event, { get: async () => undefined, prompt: async () => {} } as any, "Fixture", {}, "steer")
+      const read = await inbox.read(to, [event.ref])
+      expect((read.items[0] as any).receipt.work_item).toHaveLength(512)
+      await inbox.ack(to, [{ id: event.ref, expected_version: 0 }], "archive")
+    }
+    const list = inbox.list(to, {})
+    expect(list.items).toHaveLength(20)
+    expect(inbox.list(to, { cursor: list.next_cursor }).items).toHaveLength(1)
+    const ack = await inbox.ack(to, list.items.map((item: any) => ({ id: item.id, expected_version: 9 })), "processed")
+    expect(ack.results.every((r: any) => r.conflict)).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(list))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
     expect(Buffer.byteLength(JSON.stringify(ack))).toBeLessThanOrEqual(MAX_BATCH_BYTES)
   })
 

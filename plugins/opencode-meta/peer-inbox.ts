@@ -18,7 +18,7 @@ export const MAX_PAGE = 20
 // List and ack return up to 20 headers; descriptive fields (a title has no length limit, receipt fields allow 512
 // characters, and escaping can make each character 6 bytes) are clipped there so a page stays under MAX_BATCH_BYTES.
 // read still returns the full original.
-export const MAX_HEADER_FIELD = 48
+export const MAX_HEADER_FIELD = 40
 const clip = (value?: string) => value?.slice(0, MAX_HEADER_FIELD)
 
 export const RECEIPT_KINDS = ["fyi", "actionable"] as const
