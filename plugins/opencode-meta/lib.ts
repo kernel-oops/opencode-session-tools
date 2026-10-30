@@ -130,7 +130,7 @@ export function validateArgs(args: unknown, context: ToolContextLike = {}): Requ
 
 export const DIGEST_HELP =
   "Digest mode batches routine (priority \"normal\") send_message messages to this session into one prompt per interval, " +
-  "so many progress reports cost one wake; each digest carries at most 20 whole messages (48 KiB) and the rest wait for the next one. Urgent messages still arrive at once, on their own. " +
+  "so many progress reports cost one wake; each digest carries at most 20 whole messages (48 KiB) and the rest wait for the next one. Urgent messages still arrive at once, with whatever held messages fit appended after them in the same prompt. " +
   "Typed FYI receipts are never delivered by a digest, on or off: they wait in peer_inbox. " +
   "It survives restarts and applies only to peer send_message traffic. Native subagent and shell " +
   "callbacks retain normal core delivery at the next safe boundary, without digest interception. " +
@@ -492,7 +492,7 @@ export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): P
       name: "opencode_meta",
       description:
         "Read bounded, current OpenCode session metadata, relations, statistics and tool usage through the v2 API. Use recall rather than this tool to search historical conversation content. " +
-        "message_digest turns digest mode on (enabled: true, minutes 5-60, default 15) or off (enabled: false) for the calling session: only routine peer send_message messages are batched into one bounded prompt per interval; urgent ones still arrive at once, on their own; FYI receipts stay in peer_inbox. Native subagent and shell callbacks retain normal core delivery at the next safe boundary, without digest interception. Useful for a controller many sessions report to.",
+        "message_digest turns digest mode on (enabled: true, minutes 5-60, default 15) or off (enabled: false) for the calling session: only routine peer send_message messages are batched into one bounded prompt per interval; urgent ones still arrive at once, carrying held routine messages that fit in the same prompt; FYI receipts stay in peer_inbox. Native subagent and shell callbacks retain normal core delivery at the next safe boundary, without digest interception. Useful for a controller many sessions report to.",
       input: META_INPUT,
       options: { codemode: false },
       execute: async (input: unknown, context: ToolContextLike) => {
@@ -539,7 +539,7 @@ export async function setupMeta(ctx: any, setup: { indexing?: boolean } = {}): P
 
 /**
  * Relay deliveries to a parent in digest mode: normal ones join its digest once durably held (a failed hold falls back
- * to ordinary relay delivery, so nothing is lost); urgent ones are delivered by the relay on their own.
+ * to ordinary relay delivery, so nothing is lost); urgent ones are delivered by the relay (Digest.sendNow), which may carry held ones.
  */
 export function digestDivert(digest: Digest): Divert {
   return async (childID, message) => {

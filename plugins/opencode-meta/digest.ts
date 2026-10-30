@@ -1,6 +1,6 @@
 // Message digest: a session that opts in gets routine ("normal" priority) cross-session messages collected and
 // delivered together, at most one bounded batch per interval, instead of being woken by each one. Urgent messages are
-// delivered at once, on their own. Held messages are originals in the peer inbox (peer-inbox.ts): delivery records a
+// delivered at once, with any held messages that fit carried after them in the same prompt (sendNow). Held messages are originals in the peer inbox (peer-inbox.ts): delivery records a
 // batch manifest and never deletes them. Passive FYI receipts are never delivered by a digest.
 //
 // Why: a long-running controller with a large context re-reads all of it on every wake. Ten or twenty workers each
@@ -16,7 +16,7 @@
 // they survive a server restart; storage is read back once per process. Old `digest:held:` peer messages are imported
 // into the peer inbox then; legacy completion records stay quarantined under their own keys.
 
-import { ATTENTION_STATES, freshInbox, PeerInbox, receiptLines, type AdmissionPolicy, type InboxRegistry, type PeerEvent, type Receipt } from "./peer-inbox.ts"
+import { ATTENTION_STATES, freshInbox, PeerInbox, receiptLines, type AdmissionPolicy, type Batch, type BatchState, type InboxRegistry, type PeerEvent, type Receipt } from "./peer-inbox.ts"
 
 export const DEFAULT_DIGEST_MINUTES = 15
 export const MIN_DIGEST_MINUTES = 5
@@ -227,11 +227,11 @@ const precedence = (receipt?: Receipt) =>
  * One bounded digest of whole peer-inbox originals, with their stable IDs and exact receipt fields. Display order puts
  * attention first, then age; nothing is shortened. Messages left over or too large are named, not summarised.
  */
-export function batchText(events: ReadonlyArray<PeerEvent>, input: { minutes?: number; remaining: number; oversize: ReadonlyArray<PeerEvent> }): string {
+export function batchText(events: ReadonlyArray<PeerEvent>, input: { minutes?: number; remaining: number; oversize: ReadonlyArray<PeerEvent>; carried?: boolean }): string {
   const sorted = [...events].sort((a, b) => precedence(a.receipt) - precedence(b.receipt) || a.at - b.at || (a.ref < b.ref ? -1 : 1))
   const all = [...events, ...input.oversize]
   const oldest = Math.min(...all.map((event) => event.at))
-  const head = `[cross-session digest: ${plural(sorted.length, "routine message")} from other sessions, held since ${time(oldest)}]`
+  const head = `[cross-session digest: ${plural(sorted.length, "routine message")} from other sessions, held since ${time(oldest)}${input.carried ? ", delivered now with the message above" : ""}]`
   const why = input.minutes
     ? `Digest mode is on for this session (every ${input.minutes} min): routine messages from other sessions are collected and delivered together; urgent messages arrive at once.`
     : "Digest mode is off for this session now; these were held while it was on."
@@ -450,18 +450,65 @@ export class Digest {
         },
       }), policy)
       if (!batch) return 0
-      const settings = this.registry.settings.get(sessionID)
-      if (settings) {
-        settings.last = this.now()
-        // Queued behind any choice in flight, and skipped once a newer choice replaced these settings.
-        await this.serial(sessionID, async () => {
-          if (this.registry.settings.get(sessionID) === settings) await this.store.set(cfgKey(sessionID), settings)
-        }).catch(() => this.log(`${sessionID}: digest interval not persisted`))
-      }
+      await this.stamp(sessionID, this.registry.settings.get(sessionID))
       if (delivered) this.log(`${sessionID}: delivered a digest of ${delivered} item(s) (${idle ? "woke it" : "steered into its run"})`)
       return delivered
     } finally {
       this.registry.flushing.delete(sessionID)
+    }
+  }
+
+  /** A digest was delivered: the next interval starts now. Queued behind any choice in flight, and skipped once a newer choice replaced these settings. */
+  private async stamp(sessionID: string, settings: DigestSettings | undefined) {
+    if (!settings || this.registry.settings.get(sessionID) !== settings) return
+    settings.last = this.now()
+    await this.serial(sessionID, async () => {
+      if (this.registry.settings.get(sessionID) === settings) await this.store.set(cfgKey(sessionID), settings)
+    }).catch(() => this.log(`${sessionID}: digest interval not persisted`))
+  }
+
+  /**
+   * The one actual send for an immediate message (send_message, and the parent relay when it delivers rather than merges
+   * or diverts): a steer to a recipient whose digest mode is known, with recovery complete and no digest being delivered,
+   * carries waiting routine originals after it in the same prompt. Otherwise it follows the existing route: a typed
+   * original on its own manifest, untyped text as a plain prompt. Never waits for, or takes over, a digest in progress.
+   */
+  async sendNow(api: DigestApi, input: { to: string; event?: PeerEvent; text: string; metadata: Record<string, unknown>; delivery: "steer" | "queue" }): Promise<{ batch?: Batch; state?: BatchState; duplicate?: boolean; plain?: boolean; carried?: number }> {
+    const { to } = input
+    const mode = this.mode(to)
+    const carry = input.delivery === "steer" && mode !== "unknown" && this.registry.inbox.loaded && !this.registry.flushing.has(to) && this.inbox.waiting(to).length > 0
+    if (!carry) {
+      if (input.event) return this.inbox.direct(input.event, api, input.text, input.metadata, input.delivery)
+      await api.prompt({ sessionID: to, text: input.text, delivery: input.delivery, metadata: input.metadata })
+      return { plain: true }
+    }
+    // Claimed synchronously, before anything is awaited, exactly as a digest is.
+    this.registry.flushing.add(to)
+    try {
+      const chosen = this.registry.settings.get(to)
+      const minutes = chosen?.minutes
+      const frame = JSON.stringify({ reason: "carry", minutes: minutes ?? null })
+      const policy: AdmissionPolicy = {
+        gate: (run) => this.serial(to, run),
+        frame,
+        allowed: (batch) => batch.frame === frame && this.mode(to) === mode && this.registry.settings.get(to) === chosen,
+      }
+      const crossSession = (input.metadata.crossSession ?? {}) as Record<string, unknown>
+      const sent = await this.inbox.immediate(to, input.event, api, input.text, input.metadata, input.delivery, {
+        policy,
+        render: (events, remaining) => ({
+          text: `${input.text}\n\n${batchText(events, { minutes, remaining, oversize: [], carried: true })}`,
+          metadata: { ...input.metadata, crossSession: { ...crossSession, carried: { count: events.length, from: [...new Set(events.map((event) => event.from))], ids: events.map((event) => event.ref), remaining } } },
+        }),
+      })
+      if (sent.plain) await api.prompt({ sessionID: to, text: input.text, delivery: input.delivery, metadata: input.metadata })
+      if (sent.carried && sent.state === "admitted") {
+        await this.stamp(to, chosen)
+        this.log(`${to}: carried ${sent.carried} held message(s) with an immediate message`)
+      }
+      return sent
+    } finally {
+      this.registry.flushing.delete(to)
     }
   }
 

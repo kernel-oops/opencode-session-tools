@@ -315,7 +315,9 @@ export async function sendMessage(
       fromTitle: sender.title,
       recipientIsClaudeCode,
       ...(receipt ? { receipt } : {}),
-      ...(stored ? { send: () => inbox!.direct(stored.event, sessions, framed, metadata, delivery), release: () => inbox!.release(stored.event) } : {}),
+      // Delivered (not merged or diverted) through the same actual send as an immediate message, so it may carry the parent's held digest.
+      ...(digest ? { send: () => digest.sendNow(sessions, { to: target.id, event: stored?.event, text: framed, metadata, delivery }) } : {}),
+      ...(stored ? { release: () => inbox!.release(stored.event) } : {}),
     })
     return {
       ...downgraded,
@@ -353,22 +355,26 @@ export async function sendMessage(
         `It has not seen this yet. Do not resend it; if the target must act now, send a new message with priority "urgent".`,
     }
   }
-  // An urgent message travels on its own: held and passive messages wait for their own digest or retrieval.
+  // Passive messages wait for retrieval; held digest messages may travel after this one in the same prompt (sendNow).
   // Only a message that wakes an idle session is worth watching; a running one takes it at its next step.
   const waking = delivery === "steer" && looksIdle(targetInfo)
   // Steer, not queue: a queued prompt waits for the target's next turn, which a session running a long
   // chain of subagents may not start for hours; a steer arrives at the next step boundary.
-  if (stored) {
+  if (digest) {
     // A duplicate held for a digest earlier stays there; a direct one is attempted only if it never got a manifest.
-    if (stored.duplicate && !stored.event.direct) return duplicate
-    const sent = await inbox!.direct(stored.event, sessions, framed, metadata, delivery)
-    const id = stored.event.id
+    if (stored?.duplicate && !stored.event.direct) return duplicate
+    // Carries the recipient's waiting digest messages in the same prompt when it can (digest.ts sendNow).
+    const sent = await digest.sendNow(sessions, { to: target.id, event: stored?.event, text: framed, metadata, delivery })
+    const id = stored?.event.id
+    const unsent = stored ? `Receipt ${id} was recorded but not sent` : "This message was not sent"
     if (sent.duplicate) return duplicate
-    if (!sent.batch) throw new Error(`Receipt ${id} was recorded, but its delivery record could not be stored, so it was not sent. Resending the same receipt retries it.`)
-    if (sent.state === "failed_before_admission") throw new Error(`Receipt ${id} was recorded but not sent: ${target.id} was not found.`)
+    if (stored && !sent.batch) throw new Error(`Receipt ${id} was recorded, but its delivery record could not be stored, so it was not sent. Resending the same receipt retries it.`)
+    if (sent.state === "failed_before_admission") throw new Error(`${unsent}: ${target.id} was not found.`)
     if (sent.state === "admission_unknown") {
-      throw new Error(`Receipt ${id} was recorded, but whether ${target.id} received it is unknown (${sent.batch.error}). It is not resent automatically; do not resend it.`)
+      throw new Error(`${stored ? `Receipt ${id} was recorded, but whether` : "Whether"} ${target.id} received it is unknown (${sent.batch!.error}). It is not resent automatically; do not resend it.`)
     }
+    // An unconfirmed withdrawal after a digest setting change keeps the attempt fenced: known unsent here, never retried.
+    if (sent.state === "prepared") throw new Error(`${unsent}: ${target.id}'s digest setting changed just before delivery and that could not be recorded, so it is not retried automatically.`)
   } else await sessions.prompt({ sessionID: target.id, text: framed, delivery, metadata })
   // `delivered` only means the message was admitted to the target's inbox. If the target cannot run (for example its
   // provider's usage limit is reached) nobody reads it, so say what was observed rather than let it look received.

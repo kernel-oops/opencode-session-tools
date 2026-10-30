@@ -541,17 +541,55 @@ export class PeerInbox {
    * manifest with a stable native ID. Once an original has a manifest it is never attempted again: `duplicate`.
    */
   async direct(event: PeerEvent, api: PromptApi, text: string, metadata: Record<string, unknown>, delivery: "steer" | "queue"): Promise<{ batch?: Batch; state?: BatchState; duplicate?: boolean }> {
+    return this.immediate(event.to, event, api, text, metadata, delivery)
+  }
+
+  /**
+   * One immediate message (a stored typed original, or untyped text that lives only in the manifest), optionally with
+   * waiting digest originals carried after it in the same prompt: one manifest, one native ID, whole originals only,
+   * at most MAX_BATCH_EVENTS originals (the typed immediate included) and MAX_BATCH_BYTES for the whole prompt.
+   * Originals that do not fit stay waiting. If the carry policy no longer holds before admission, the combined manifest
+   * is durably withdrawn and the immediate one goes alone; an unconfirmed withdrawal stays fenced (`prepared`), unsent.
+   * `plain`: untyped and nothing carried (or its manifest could not be stored), so the caller sends it as before.
+   */
+  async immediate(
+    to: string,
+    event: PeerEvent | undefined,
+    api: PromptApi,
+    text: string,
+    metadata: Record<string, unknown>,
+    delivery: "steer" | "queue",
+    carry?: { policy: AdmissionPolicy; render: (events: PeerEvent[], remaining: number) => { text: string; metadata: Record<string, unknown> } },
+  ): Promise<{ batch?: Batch; state?: BatchState; duplicate?: boolean; plain?: boolean; carried?: number }> {
     // Its manifest may not be read back yet: never risk a second attempt under a new ID.
-    if (!this.registry.loaded) await this.ready()
-    if (!this.registry.loaded) throw new Error(`peer inbox recovery is still in progress, so ${event.ref} was recorded but not sent; resend the same receipt shortly.`)
-    const reserved = await this.locked(event.to, async () => {
-      const entry = this.entries(event.to).get(event.ref)
-      if (!entry) throw new Error(`${event.ref} is not recorded; nothing was sent.`)
-      if (entry.batch) return { batch: this.batches(event.to).get(entry.batch), duplicate: true }
-      return { batch: await this.reserve(event.to, [event], [], text, metadata, delivery) }
+    if (event && !this.registry.loaded) await this.ready()
+    if (event && !this.registry.loaded) throw new Error(`peer inbox recovery is still in progress, so ${event.ref} was recorded but not sent; resend the same receipt shortly.`)
+    const reserved = await this.locked(to, async () => {
+      if (event) {
+        const entry = this.entries(to).get(event.ref)
+        if (!entry) throw new Error(`${event.ref} is not recorded; nothing was sent.`)
+        // Only a durably withdrawn (known unsent) manifest frees an original for a new attempt.
+        const previous = entry.batch ? this.batches(to).get(entry.batch) : undefined
+        if (entry.batch && previous?.state !== "withdrawn") return { batch: previous, duplicate: true }
+      }
+      const waiting = carry && this.registry.loaded ? this.waiting(to).filter((entry) => entry.event.ref !== event?.ref && this.batches(to).get(entry.batch ?? "")?.state !== "failed_before_admission") : []
+      const size = (rendered: { text: string; metadata: Record<string, unknown> }) => bytes({ sessionID: to, id: promptID(0), text: rendered.text, delivery, metadata: rendered.metadata })
+      const chosen: PeerEvent[] = []
+      for (const entry of waiting) {
+        if (chosen.length + (event ? 1 : 0) >= MAX_BATCH_EVENTS) break
+        if (size(carry!.render([...chosen, entry.event], waiting.length - chosen.length - 1)) > MAX_BATCH_BYTES) break
+        chosen.push(entry.event)
+      }
+      if (!event && !chosen.length) return { plain: true }
+      const rendered = chosen.length ? carry!.render(chosen, waiting.length - chosen.length) : { text, metadata }
+      const batch = await this.reserve(to, [...(event ? [event] : []), ...chosen], [], rendered.text, rendered.metadata, delivery, chosen.length ? carry!.policy.frame : undefined)
+      return batch || event ? { batch, carried: chosen.length } : { plain: true }
     })
-    if (reserved.duplicate || !reserved.batch) return reserved
-    return { batch: reserved.batch, state: await this.admit(reserved.batch, api) }
+    if (reserved.duplicate || reserved.plain || !reserved.batch) return reserved
+    if (!reserved.carried) return { batch: reserved.batch, state: await this.admit(reserved.batch, api) }
+    const state = await this.admit(reserved.batch, api, carry!.policy)
+    if (state === "withdrawn") return this.immediate(to, event, api, text, metadata, delivery)
+    return { batch: reserved.batch, state, carried: reserved.carried }
   }
 
   /**

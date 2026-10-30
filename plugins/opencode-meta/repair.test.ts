@@ -290,16 +290,17 @@ test("R2-2: a normal typed report to a digest-mode parent joins its digest; urge
   expect(w.digest.pending("ses_target")).toBe(1)
   expect(await send(fyi("urgent", { kind: "actionable" }), "urgent")).toMatchObject({ held: true })
   await relay.toolStarted("ses_kid", "read")
-  expect(w.prompts.map((prompt) => prompt.text)).toEqual([expect.stringContaining("report urgent")])
-  // The release is durable: a restarted process delivers it in the digest, once.
+  // The relayed urgent original is delivered with the released normal one carried after it, in one prompt.
+  expect(w.prompts).toHaveLength(1)
+  expect(w.prompts[0].text.indexOf("report urgent")).toBeLessThan(w.prompts[0].text.indexOf("report normal"))
+  expect(w.prompts[0].metadata.crossSession.carried).toMatchObject({ count: 1, ids: ["ses_kid:normal"] })
+  // Durable: a restarted process sees both offered and delivers nothing again.
   const restarted = world(w.store)
   await restarted.digest.restoreFromStorage()
-  expect(restarted.digest.pending("ses_target")).toBe(1)
+  expect(restarted.digest.pending("ses_target")).toBe(0)
   await restarted.digest.flush("ses_target")
-  expect(restarted.prompts).toHaveLength(1)
-  expect(restarted.prompts[0].text).toContain("report normal")
   await restarted.digest.disable("ses_target")
-  expect(restarted.prompts).toHaveLength(1)
+  expect(restarted.prompts).toHaveLength(0)
   // Digest off: delivered on its own now.
   const other = world()
   const plain = new ParentRelay(other.api, { graceMs: 1, divert: digestDivert(other.digest) })

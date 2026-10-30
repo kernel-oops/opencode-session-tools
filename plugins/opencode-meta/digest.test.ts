@@ -258,11 +258,10 @@ describe("digest mode", () => {
     expect(w.prompts[1]).toMatchObject({ delivery: "steer", metadata: { crossSession: { digest: { woke: false, count: 2 } } } })
   })
 
-  test("an urgent message travels on its own: held messages wait for their digest and the interval is unchanged", async () => {
+  test("an urgent message carries the held digest after it in the same prompt and restarts the interval", async () => {
     const w = world()
     w.setIdle(false)
     await w.digest.enable("ses_ctl", 15)
-    const last = w.registry.settings.get("ses_ctl")!.last
     await w.send("ses_w1", "routine one")
     w.advance(1 * MIN)
     await w.send("ses_w2", "routine two")
@@ -271,12 +270,17 @@ describe("digest mode", () => {
     expect(result).toEqual({ delivered: true, to: "ses_ctl", title: "Release coordinator", delivery: "steer", priority: "urgent" })
     expect(w.prompts).toHaveLength(1)
     const text: string = w.prompts[0].text
-    expect(text).toStartWith('[cross-session message from ses_w1 "Worker one"]')
-    expect(text).not.toContain("routine")
-    expect(text).not.toContain("cross-session digest")
-    expect(w.prompts[0].metadata.crossSession).not.toHaveProperty("carried")
-    expect(w.digest.pending("ses_ctl")).toBe(2)
-    expect(w.registry.settings.get("ses_ctl")!.last).toBe(last)
+    expect(text).toStartWith('[cross-session message from ses_w1 "Worker one"]\n\n[urgent — blocker')
+    // The urgent frame is complete (with its peer footer) before the carried digest begins.
+    expect(text.indexOf("reply with send_message to \"ses_w1\"")).toBeLessThan(text.indexOf("[cross-session digest: 2 routine messages"))
+    expect(text).toContain("delivered now with the message above]")
+    expect(text.indexOf("routine one")).toBeLessThan(text.indexOf("routine two"))
+    expect(w.prompts[0].metadata.crossSession).toMatchObject({ from: "ses_w1", priority: "urgent", carried: { count: 2, remaining: 0, from: ["ses_w1", "ses_w2"] } })
+    expect(w.digest.pending("ses_ctl")).toBe(0)
+    expect(w.registry.settings.get("ses_ctl")!.last).toBe(w.now())
+    w.advance(60 * MIN)
+    await w.digest.tick(0)
+    expect(w.prompts).toHaveLength(1)
   })
 
   test("a failed digest prompt may have been admitted: it is kept as unknown and never resent automatically", async () => {
@@ -627,15 +631,15 @@ describe("native completions bypass digest; old ledger parsing", () => {
     await w.send("ses_w1", "peer progress")
     const urgent = await w.send("ses_w2", "need action", { priority: "urgent", urgent_reason: "blocker: recipient must act now" })
     expect(urgent).not.toHaveProperty("carried")
-    expect(w.prompts.at(-1).text).not.toContain("old_sub")
-    expect((await w.digest.disable("ses_ctl")).flushed).toBe(1)
+    // The peer message is carried with the urgent one; legacy records never are.
     expect(w.prompts.at(-1).text).toContain("peer progress")
     expect(w.prompts.at(-1).text).not.toContain("old_sub")
+    expect((await w.digest.disable("ses_ctl")).flushed).toBe(0)
     expect([...w.storage.store].filter(([key]) => key.startsWith(HELD_PREFIX))).toEqual(legacy)
     const last = w.registry.settings.get("ses_ctl")?.last
     w.advance(60 * MIN)
     await w.digest.tick(0)
-    expect(w.prompts).toHaveLength(3)
+    expect(w.prompts).toHaveLength(2)
     expect(w.registry.settings.get("ses_ctl")?.last).toBe(last)
   })
 
